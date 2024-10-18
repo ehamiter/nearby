@@ -37,10 +37,12 @@ struct PlaceDetailView: View {
                 Text(place.title)
                     .font(FontManager.rounded(size: 24, weight: .bold))
                     .foregroundColor(ColorManager.text)
+                    .textCase(.lowercase)
                 
                 Text(distanceFormatter.format(place.distance))
                     .font(FontManager.rounded(size: 16, weight: .regular))
                     .foregroundColor(ColorManager.secondaryText)
+                    .textCase(.lowercase)
                     .onTapGesture {
                         distanceFormatter.toggle()
                     }
@@ -49,11 +51,13 @@ struct PlaceDetailView: View {
                     Text(place.shortDescription)
                         .font(FontManager.rounded(size: 18, weight: .medium))
                         .foregroundColor(ColorManager.text)
+                        .textCase(.lowercase)
                 }
                 
                 Text(place.longDescription)
                     .font(FontManager.rounded(size: 16, weight: .regular))
                     .foregroundColor(ColorManager.text)
+                    .textCase(.lowercase)
             }
             .padding()
         }
