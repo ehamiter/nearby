@@ -8,6 +8,10 @@ struct WikipediaPlace: Identifiable {
     var longDescription: String = ""
     let distance: Double
     var imageURL: URL?
+    
+    var firstLetter: String {
+        String(title.prefix(1).uppercased())
+    }
 }
 
 struct NearbyPlacesGrid: View {
@@ -41,6 +45,7 @@ struct NearbyPlacesGrid: View {
                             PlaceCard(place: place, distanceFormatter: distanceFormatter)
                                 .frame(height: 280)
                         }
+                        .id(place.id)
                     }
                 }
                 .padding()
@@ -156,9 +161,6 @@ struct NearbyPlacesGrid: View {
                                    let source = thumbnail["source"] as? String,
                                    let imageURL = URL(string: source) {
                                     self.places[index].imageURL = imageURL
-                                } else {
-                                    // If no image is found, search Wikimedia Commons
-                                    self.fetchWikimediaImage(for: self.places[index])
                                 }
                             }
                         }
@@ -171,38 +173,92 @@ struct NearbyPlacesGrid: View {
     }
     
     func fetchWikimediaImage(for place: WikipediaPlace) {
-        let searchTerm = place.shortDescription.isEmpty ? place.title : place.shortDescription
-        let encodedSearch = searchTerm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let urlString = "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=\(encodedSearch)&srnamespace=6&format=json&srlimit=1"
+        let searchTerms = generateSearchTerms(from: place.shortDescription.isEmpty ? place.title : place.shortDescription)
         
-        guard let url = URL(string: urlString) else { return }
-        
-        var request = URLRequest(url: url)
-        request.addValue("NearbyApp/1.0 (https://github.com/yourusername/NearbyApp; youremail@example.com)", forHTTPHeaderField: "User-Agent")
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            guard let data = data, error == nil else { return }
-            
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let query = json["query"] as? [String: Any],
-                   let search = query["search"] as? [[String: Any]],
-                   let firstResult = search.first,
-                   let title = firstResult["title"] as? String {
-                    
-                    let imageUrlString = "https://commons.wikimedia.org/wiki/Special:FilePath/\(title)?width=300"
-                    if let imageUrl = URL(string: imageUrlString) {
-                        DispatchQueue.main.async {
-                            if let index = self.places.firstIndex(where: { $0.id == place.id }) {
-                                self.places[index].imageURL = imageUrl
-                            }
-                        }
+        func tryNextSearchTerm() {
+            guard !searchTerms.isEmpty else {
+                DispatchQueue.main.async {
+                    if let index = self.places.firstIndex(where: { $0.id == place.id }) {
+                        // No image found, set to nil to trigger the letter placeholder
+                        self.places[index].imageURL = nil
+                        print("No suitable image found for: \(place.title)")
                     }
                 }
-            } catch {
-                print("Error parsing Wikimedia Commons search results: \(error.localizedDescription)")
+                return
             }
-        }.resume()
+            
+            guard let searchTerm = searchTerms.first else {
+                tryNextSearchTerm()
+                return
+            }
+            let encodedSearch = searchTerm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+            let urlString = "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=\(encodedSearch)&srnamespace=6&srlimit=10&format=json"
+            
+            guard let url = URL(string: urlString) else {
+                tryNextSearchTerm()
+                return
+            }
+            
+            var request = URLRequest(url: url)
+            request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
+            
+            URLSession.shared.dataTask(with: request) { data, response, error in
+                if let error = error {
+                    print("Error fetching Wikimedia image: \(error.localizedDescription)")
+                    tryNextSearchTerm()
+                    return
+                }
+                
+                guard let data = data else {
+                    print("No data received from Wikimedia API")
+                    tryNextSearchTerm()
+                    return
+                }
+                
+                do {
+                    if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                       let query = json["query"] as? [String: Any],
+                       let search = query["search"] as? [[String: Any]] {
+                        
+                        for result in search {
+                            if let title = result["title"] as? String,
+                               title.lowercased().hasSuffix(".jpg") || title.lowercased().hasSuffix(".png") || title.lowercased().hasSuffix(".gif") {
+                                let imageUrlString = "https://commons.wikimedia.org/wiki/Special:FilePath/\(title)?width=300"
+                                if let imageUrl = URL(string: imageUrlString) {
+                                    DispatchQueue.main.async {
+                                        if let index = self.places.firstIndex(where: { $0.id == place.id }) {
+                                            self.places[index].imageURL = imageUrl
+                                            print("Wikimedia image URL set: \(imageUrl)")
+                                        }
+                                    }
+                                    return
+                                }
+                            }
+                        }
+                        tryNextSearchTerm()
+                    } else {
+                        print("No search results or unexpected JSON structure")
+                        tryNextSearchTerm()
+                    }
+                } catch {
+                    print("Error parsing Wikimedia search results: \(error.localizedDescription)")
+                    tryNextSearchTerm()
+                }
+            }.resume()
+        }
+        
+        tryNextSearchTerm()
+    }
+    
+    func generateSearchTerms(from input: String) -> [String] {
+        let words = input.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        var terms: [String] = []
+        
+        for i in 0..<words.count {
+            terms.append(words[i..<words.count].joined(separator: " "))
+        }
+        
+        return terms
     }
 }
 
@@ -212,21 +268,27 @@ struct PlaceCard: View {
     
     var body: some View {
         VStack(spacing: 8) {
-            AsyncImage(url: place.imageURL) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                ZStack {
-                    Color.gray.opacity(0.3)
-                    Image(systemName: "photo")
-                        .font(.largeTitle)
-                        .foregroundColor(.gray)
+            if let imageURL = place.imageURL {
+                CachedAsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .empty:
+                        letterPlaceholder
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    case .failure:
+                        letterPlaceholder
+                    @unknown default:
+                        letterPlaceholder
+                    }
                 }
+                .frame(width: 140, height: 140)
+                .clipped()
+                .cornerRadius(10)
+            } else {
+                letterPlaceholder
             }
-            .frame(width: 140, height: 140)
-            .clipped()
-            .cornerRadius(10)
             
             Text(place.title)
                 .font(.headline)
@@ -254,5 +316,16 @@ struct PlaceCard: View {
         .frame(height: 260)
         .padding(.horizontal, 8)
         .foregroundColor(.primary)
+    }
+    
+    var letterPlaceholder: some View {
+        ZStack {
+            Color.gray.opacity(0.3)
+            Text(place.firstLetter)
+                .font(.system(size: 60, weight: .bold))
+                .foregroundColor(.white)
+        }
+        .frame(width: 140, height: 140)
+        .cornerRadius(10)
     }
 }
