@@ -2,31 +2,20 @@ import SwiftUI
 
 struct PlaceDetailView: View {
     let place: WikipediaPlace
-    @State private var imageLoadError = false
+    @ObservedObject var distanceFormatter: DistanceFormatter
     
     var body: some View {
         ScrollView {
-            VStack(alignment: .center, spacing: 20) {
+            VStack(alignment: .leading, spacing: 16) {
                 if let imageURL = place.imageURL {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView()
-                                .frame(height: 300)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        case .failure:
-                            Image(systemName: "photo")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .foregroundColor(.gray)
-                        @unknown default:
-                            EmptyView()
-                        }
+                    AsyncImage(url: imageURL) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Color.gray
                     }
-                    .frame(height: 300)
+                    .frame(height: 200)
                     .frame(maxWidth: .infinity)
                     .clipped()
                 }
@@ -36,24 +25,24 @@ struct PlaceDetailView: View {
                         .font(.title)
                         .fontWeight(.bold)
                     
-                    Text("Distance: \(Int(place.distance))m")
+                    Text("Distance: \(distanceFormatter.format(place.distance))")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                        .onTapGesture {
+                            distanceFormatter.toggle()
+                        }
                     
-                    Text(place.description)
+                    Text(place.longDescription)
                         .font(.body)
                     
-                    Link("Read more on Wikipedia", destination: URL(string: "https://en.wikipedia.org/?curid=\(place.id)")!)
+                    Link("Read more on Wikipedia", destination: URL(string: "https://en.m.wikipedia.org/?curid=\(place.id)")!)
                         .font(.headline)
                         .padding(.top)
-                    
-                    Spacer()
                 }
                 .padding(.horizontal)
             }
         }
         .navigationTitle(place.title)
         .navigationBarTitleDisplayMode(.inline)
-        .edgesIgnoringSafeArea(.top)
     }
 }

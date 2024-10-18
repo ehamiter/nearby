@@ -4,7 +4,8 @@ import CoreLocation
 struct WikipediaPlace: Identifiable {
     let id: Int
     let title: String
-    var description: String = ""
+    var shortDescription: String = ""
+    var longDescription: String = ""
     let distance: Double
     var imageURL: URL?
 }
@@ -14,9 +15,9 @@ struct NearbyPlacesGrid: View {
     @State private var places: [WikipediaPlace] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @StateObject private var distanceFormatter = DistanceFormatter()
     
     let columns = [
-        GridItem(.flexible()),
         GridItem(.flexible()),
         GridItem(.flexible())
     ]
@@ -26,16 +27,19 @@ struct NearbyPlacesGrid: View {
             if isLoading {
                 ProgressView()
                 Text("Loading...")
+                    .font(.title3)
             } else if let error = errorMessage {
                 Text("Error: \(error)")
+                    .font(.title3)
             } else if places.isEmpty {
                 Text("No places found nearby.")
+                    .font(.title3)
             } else {
                 LazyVGrid(columns: columns, spacing: 20) {
                     ForEach(places) { place in
-                        NavigationLink(destination: PlaceDetailView(place: place)) {
-                            PlaceCard(place: place)
-                                .frame(height: 220)
+                        NavigationLink(destination: PlaceDetailView(place: place, distanceFormatter: distanceFormatter)) {
+                            PlaceCard(place: place, distanceFormatter: distanceFormatter)
+                                .frame(height: 280)
                         }
                     }
                 }
@@ -51,22 +55,22 @@ struct NearbyPlacesGrid: View {
         isLoading = true
         errorMessage = nil
         
-        let urlString = "https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=\(location.latitude)|\(location.longitude)&gsradius=10000&gslimit=50&format=json&maxlag=5"
+        let urlString = "https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=\(location.latitude)|\(location.longitude)&gsradius=10000&gslimit=24&format=json&maxlag=5"
         
         guard let url = URL(string: urlString) else {
             isLoading = false
-            errorMessage = "Invalid URL"
+            errorMessage = "invalid URL"
             return
         }
         
         var request = URLRequest(url: url)
-        request.addValue("NearbyApp/1.0 (https://github.com/yourusername/NearbyApp; youremail@example.com)", forHTTPHeaderField: "User-Agent")
+        request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
                 DispatchQueue.main.async {
                     self.isLoading = false
-                    self.errorMessage = "Network error: \(error.localizedDescription)"
+                    self.errorMessage = "network error: \(error.localizedDescription)"
                 }
                 return
             }
@@ -74,7 +78,7 @@ struct NearbyPlacesGrid: View {
             guard let data = data else {
                 DispatchQueue.main.async {
                     self.isLoading = false
-                    self.errorMessage = "No data received"
+                    self.errorMessage = "no data received"
                 }
                 return
             }
@@ -98,7 +102,7 @@ struct NearbyPlacesGrid: View {
                         self.places = fetchedPlaces
                         self.isLoading = false
                         if fetchedPlaces.isEmpty {
-                            self.errorMessage = "No places found nearby"
+                            self.errorMessage = "no places found nearby"
                         } else {
                             fetchPlaceDetails()
                         }
@@ -106,7 +110,7 @@ struct NearbyPlacesGrid: View {
                 } else {
                     DispatchQueue.main.async {
                         self.isLoading = false
-                        self.errorMessage = "Unable to parse results"
+                        self.errorMessage = "unable to parse results"
                     }
                 }
             } catch {
@@ -120,16 +124,16 @@ struct NearbyPlacesGrid: View {
     
     func fetchPlaceDetails() {
         let pageIds = places.map { String($0.id) }.joined(separator: "|")
-        let urlString = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts|pageimages&exintro&explaintext&pageids=\(pageIds)&format=json&pithumbsize=200&maxlag=5"
+        let urlString = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts|pageimages|pageprops&exintro&explaintext&pageids=\(pageIds)&format=json&pithumbsize=200&maxlag=5"
         
         guard let url = URL(string: urlString) else { return }
         
         var request = URLRequest(url: url)
-        request.addValue("NearbyApp/1.0 (https://github.com/yourusername/NearbyApp; youremail@example.com)", forHTTPHeaderField: "User-Agent")
+        request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             guard let data = data, error == nil else {
-                print("Error fetching place details: \(error?.localizedDescription ?? "Unknown error")")
+                print("error fetching place details: \(error?.localizedDescription ?? "unknown error")")
                 return
             }
             
@@ -141,11 +145,20 @@ struct NearbyPlacesGrid: View {
                     for (pageId, pageInfo) in pages {
                         if let index = self.places.firstIndex(where: { $0.id == Int(pageId) }) {
                             DispatchQueue.main.async {
-                                self.places[index].description = pageInfo["extract"] as? String ?? ""
+                                self.places[index].longDescription = pageInfo["extract"] as? String ?? ""
+                                
+                                if let pageprops = pageInfo["pageprops"] as? [String: Any],
+                                   let shortDesc = pageprops["wikibase-shortdesc"] as? String {
+                                    self.places[index].shortDescription = shortDesc
+                                }
+                                
                                 if let thumbnail = pageInfo["thumbnail"] as? [String: Any],
                                    let source = thumbnail["source"] as? String,
                                    let imageURL = URL(string: source) {
                                     self.places[index].imageURL = imageURL
+                                } else {
+                                    // If no image is found, search Wikimedia Commons
+                                    self.fetchWikimediaImage(for: self.places[index])
                                 }
                             }
                         }
@@ -156,44 +169,90 @@ struct NearbyPlacesGrid: View {
             }
         }.resume()
     }
+    
+    func fetchWikimediaImage(for place: WikipediaPlace) {
+        let searchTerm = place.shortDescription.isEmpty ? place.title : place.shortDescription
+        let encodedSearch = searchTerm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlString = "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=\(encodedSearch)&srnamespace=6&format=json&srlimit=1"
+        
+        guard let url = URL(string: urlString) else { return }
+        
+        var request = URLRequest(url: url)
+        request.addValue("NearbyApp/1.0 (https://github.com/yourusername/NearbyApp; youremail@example.com)", forHTTPHeaderField: "User-Agent")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let data = data, error == nil else { return }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
+                   let query = json["query"] as? [String: Any],
+                   let search = query["search"] as? [[String: Any]],
+                   let firstResult = search.first,
+                   let title = firstResult["title"] as? String {
+                    
+                    let imageUrlString = "https://commons.wikimedia.org/wiki/Special:FilePath/\(title)?width=300"
+                    if let imageUrl = URL(string: imageUrlString) {
+                        DispatchQueue.main.async {
+                            if let index = self.places.firstIndex(where: { $0.id == place.id }) {
+                                self.places[index].imageURL = imageUrl
+                            }
+                        }
+                    }
+                }
+            } catch {
+                print("Error parsing Wikimedia Commons search results: \(error.localizedDescription)")
+            }
+        }.resume()
+    }
 }
 
 struct PlaceCard: View {
     let place: WikipediaPlace
+    @ObservedObject var distanceFormatter: DistanceFormatter
     
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             AsyncImage(url: place.imageURL) { image in
-                image.resizable()
+                image
+                    .resizable()
                     .aspectRatio(contentMode: .fill)
             } placeholder: {
-                Color.gray
+                ZStack {
+                    Color.gray.opacity(0.3)
+                    Image(systemName: "photo")
+                        .font(.largeTitle)
+                        .foregroundColor(.gray)
+                }
             }
-            .frame(height: 100)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .frame(width: 140, height: 140)
+            .clipped()
+            .cornerRadius(10)
             
             Text(place.title)
-                .font(.caption)
+                .font(.headline)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
-                .frame(height: 36)
+                .frame(height: 50)
             
-            Text("\(Int(place.distance))m")
-                .font(.caption2)
+            Text(distanceFormatter.format(place.distance))
+                .font(.subheadline)
                 .foregroundColor(.secondary)
+                .onTapGesture {
+                    distanceFormatter.toggle()
+                }
             
-            if !place.description.isEmpty {
-                Text(place.description)
-                    .font(.caption2)
-                    .lineLimit(3)
+            if !place.shortDescription.isEmpty {
+                Text(place.shortDescription)
+                    .font(.caption)
+                    .lineLimit(2)
                     .multilineTextAlignment(.center)
-                    .frame(height: 48)
+                    .frame(height: 40)
             } else {
-                Spacer().frame(height: 48)
+                Spacer().frame(height: 40)
             }
         }
-        .frame(height: 220)
-        .padding(.horizontal, 4)
+        .frame(height: 260)
+        .padding(.horizontal, 8)
         .foregroundColor(.primary)
     }
 }
