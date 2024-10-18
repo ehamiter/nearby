@@ -22,33 +22,36 @@ struct NearbyPlacesGrid: View {
     @StateObject private var distanceFormatter = DistanceFormatter()
     
     let columns = [
-        GridItem(.flexible()),
-        GridItem(.flexible())
+        GridItem(.fixed(UIScreen.main.bounds.width / 2 - 24), spacing: 16),
+        GridItem(.fixed(UIScreen.main.bounds.width / 2 - 24), spacing: 16)
     ]
-    
     var body: some View {
         ScrollView {
-            if isLoading {
-                ProgressView()
-                Text("Loading...")
-                    .font(.title3)
-            } else if let error = errorMessage {
-                Text("Error: \(error)")
-                    .font(.title3)
-            } else if places.isEmpty {
-                Text("No places found nearby.")
-                    .font(.title3)
-            } else {
-                LazyVGrid(columns: columns, spacing: 20) {
-                    ForEach(places) { place in
-                        NavigationLink(destination: PlaceDetailView(place: place, distanceFormatter: distanceFormatter)) {
-                            PlaceCard(place: place, distanceFormatter: distanceFormatter)
-                                .frame(height: 280)
+            VStack {
+                if isLoading {
+                    ProgressView()
+                    Text("loading...")
+                        .font(FontManager.rounded(size: 18, weight: .regular))
+                        .textCase(.lowercase)
+                } else if let error = errorMessage {
+                    Text("error: \(error)")
+                        .font(FontManager.rounded(size: 18, weight: .regular))
+                        .textCase(.lowercase)
+                } else if places.isEmpty {
+                    Text("no places found nearby.")
+                        .font(FontManager.rounded(size: 18, weight: .regular))
+                        .textCase(.lowercase)
+                } else {
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(places) { place in
+                            NavigationLink(destination: PlaceDetailView(place: place, distanceFormatter: distanceFormatter)) {
+                                PlaceCard(place: place, distanceFormatter: distanceFormatter)
+                            }
+                            .id(place.id)
                         }
-                        .id(place.id)
                     }
+                    .padding(.horizontal)
                 }
-                .padding()
             }
         }
         .onAppear {
@@ -60,206 +63,57 @@ struct NearbyPlacesGrid: View {
         isLoading = true
         errorMessage = nil
         
-        let urlString = "https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=\(location.latitude)|\(location.longitude)&gsradius=10000&gslimit=24&format=json&maxlag=5"
-        
-        guard let url = URL(string: urlString) else {
-            isLoading = false
-            errorMessage = "invalid URL"
-            return
+        WikipediaAPI.shared.fetchNearbyPlaces(location: location) { result in
+            DispatchQueue.main.async {
+                self.isLoading = false
+                switch result {
+                case .success(let fetchedPlaces):
+                    self.places = fetchedPlaces
+                    if fetchedPlaces.isEmpty {
+                        self.errorMessage = "no places found nearby"
+                    } else {
+                        self.fetchPlaceDetails()
+                    }
+                case .failure(let error):
+                    self.errorMessage = "Error: \(error.localizedDescription)"
+                }
+            }
         }
-        
-        var request = URLRequest(url: url)
-        request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                    self.errorMessage = "network error: \(error.localizedDescription)"
-                }
-                return
-            }
-            
-            guard let data = data else {
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                    self.errorMessage = "no data received"
-                }
-                return
-            }
-            
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let query = json["query"] as? [String: Any],
-                   let geosearch = query["geosearch"] as? [[String: Any]] {
-                    
-                    let fetchedPlaces = geosearch.compactMap { place -> WikipediaPlace? in
-                        guard let pageId = place["pageid"] as? Int,
-                              let title = place["title"] as? String,
-                              let distance = place["dist"] as? Double else {
-                            return nil
-                        }
-                        
-                        return WikipediaPlace(id: pageId, title: title, distance: distance, imageURL: nil)
-                    }
-                    
-                    DispatchQueue.main.async {
-                        self.places = fetchedPlaces
-                        self.isLoading = false
-                        if fetchedPlaces.isEmpty {
-                            self.errorMessage = "no places found nearby"
-                        } else {
-                            fetchPlaceDetails()
-                        }
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.isLoading = false
-                        self.errorMessage = "unable to parse results"
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                    self.errorMessage = "JSON parsing error: \(error.localizedDescription)"
-                }
-            }
-        }.resume()
     }
     
     func fetchPlaceDetails() {
-        let pageIds = places.map { String($0.id) }.joined(separator: "|")
-        let urlString = "https://en.wikipedia.org/w/api.php?action=query&prop=extracts|pageimages|pageprops&exintro&explaintext&pageids=\(pageIds)&format=json&pithumbsize=200&maxlag=5"
-        
-        guard let url = URL(string: urlString) else { return }
-        
-        var request = URLRequest(url: url)
-        request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
-        
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            guard let data = data, error == nil else {
-                print("error fetching place details: \(error?.localizedDescription ?? "unknown error")")
-                return
-            }
-            
-            do {
-                if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                   let query = json["query"] as? [String: Any],
-                   let pages = query["pages"] as? [String: [String: Any]] {
-                    
-                    for (pageId, pageInfo) in pages {
-                        if let index = self.places.firstIndex(where: { $0.id == Int(pageId) }) {
-                            DispatchQueue.main.async {
-                                self.places[index].longDescription = pageInfo["extract"] as? String ?? ""
-                                
-                                if let pageprops = pageInfo["pageprops"] as? [String: Any],
-                                   let shortDesc = pageprops["wikibase-shortdesc"] as? String {
-                                    self.places[index].shortDescription = shortDesc
-                                }
-                                
-                                if let thumbnail = pageInfo["thumbnail"] as? [String: Any],
-                                   let source = thumbnail["source"] as? String,
-                                   let imageURL = URL(string: source) {
-                                    self.places[index].imageURL = imageURL
-                                }
-                            }
+        WikipediaAPI.shared.fetchPlaceDetails(places: places) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let updatedPlaces):
+                    self.places = updatedPlaces
+                    for place in self.places {
+                        if place.imageURL == nil {
+                            self.fetchWikimediaImage(for: place)
                         }
                     }
+                case .failure(let error):
+                    print("Error fetching place details: \(error.localizedDescription)")
                 }
-            } catch {
-                print("Error parsing place details: \(error.localizedDescription)")
             }
-        }.resume()
+        }
     }
     
     func fetchWikimediaImage(for place: WikipediaPlace) {
-        let searchTerms = generateSearchTerms(from: place.shortDescription.isEmpty ? place.title : place.shortDescription)
-        
-        func tryNextSearchTerm() {
-            guard !searchTerms.isEmpty else {
-                DispatchQueue.main.async {
+        WikipediaAPI.shared.fetchWikimediaImage(for: place) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let imageUrl):
                     if let index = self.places.firstIndex(where: { $0.id == place.id }) {
-                        // No image found, set to nil to trigger the letter placeholder
-                        self.places[index].imageURL = nil
-                        print("No suitable image found for: \(place.title)")
+                        self.places[index].imageURL = imageUrl
                     }
-                }
-                return
-            }
-            
-            guard let searchTerm = searchTerms.first else {
-                tryNextSearchTerm()
-                return
-            }
-            let encodedSearch = searchTerm.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            let urlString = "https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=\(encodedSearch)&srnamespace=6&srlimit=10&format=json"
-            
-            guard let url = URL(string: urlString) else {
-                tryNextSearchTerm()
-                return
-            }
-            
-            var request = URLRequest(url: url)
-            request.addValue("nearby/1.0 (https://github.com/ehamiter/nearby; ehamiter@gmail.com)", forHTTPHeaderField: "User-Agent")
-            
-            URLSession.shared.dataTask(with: request) { data, response, error in
-                if let error = error {
+                case .failure(let error):
                     print("Error fetching Wikimedia image: \(error.localizedDescription)")
-                    tryNextSearchTerm()
-                    return
                 }
-                
-                guard let data = data else {
-                    print("No data received from Wikimedia API")
-                    tryNextSearchTerm()
-                    return
-                }
-                
-                do {
-                    if let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any],
-                       let query = json["query"] as? [String: Any],
-                       let search = query["search"] as? [[String: Any]] {
-                        
-                        for result in search {
-                            if let title = result["title"] as? String,
-                               title.lowercased().hasSuffix(".jpg") || title.lowercased().hasSuffix(".png") || title.lowercased().hasSuffix(".gif") {
-                                let imageUrlString = "https://commons.wikimedia.org/wiki/Special:FilePath/\(title)?width=300"
-                                if let imageUrl = URL(string: imageUrlString) {
-                                    DispatchQueue.main.async {
-                                        if let index = self.places.firstIndex(where: { $0.id == place.id }) {
-                                            self.places[index].imageURL = imageUrl
-                                            print("Wikimedia image URL set: \(imageUrl)")
-                                        }
-                                    }
-                                    return
-                                }
-                            }
-                        }
-                        tryNextSearchTerm()
-                    } else {
-                        print("No search results or unexpected JSON structure")
-                        tryNextSearchTerm()
-                    }
-                } catch {
-                    print("Error parsing Wikimedia search results: \(error.localizedDescription)")
-                    tryNextSearchTerm()
-                }
-            }.resume()
+            }
         }
-        
-        tryNextSearchTerm()
     }
     
-    func generateSearchTerms(from input: String) -> [String] {
-        let words = input.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
-        var terms: [String] = []
-        
-        for i in 0..<words.count {
-            terms.append(words[i..<words.count].joined(separator: " "))
-        }
-        
-        return terms
-    }
 }
 
 struct PlaceCard: View {
@@ -267,65 +121,70 @@ struct PlaceCard: View {
     @ObservedObject var distanceFormatter: DistanceFormatter
     
     var body: some View {
-        VStack(spacing: 8) {
-            if let imageURL = place.imageURL {
-                CachedAsyncImage(url: imageURL) { phase in
-                    switch phase {
-                    case .empty:
-                        letterPlaceholder
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    case .failure:
-                        letterPlaceholder
-                    @unknown default:
-                        letterPlaceholder
+        VStack(alignment: .center, spacing: 8) {
+            ZStack {
+                if let imageURL = place.imageURL {
+                    CachedAsyncImage(url: imageURL) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        case .failure:
+                            letterPlaceholder
+                        @unknown default:
+                            letterPlaceholder
+                        }
                     }
+                } else {
+                    letterPlaceholder
                 }
-                .frame(width: 140, height: 140)
-                .clipped()
-                .cornerRadius(10)
-            } else {
-                letterPlaceholder
             }
+            .frame(width: UIScreen.main.bounds.width / 2 - 24, height: 140)
+            .clipped()
             
             Text(place.title)
-                .font(.headline)
+                .font(FontManager.rounded(size: 16, weight: .medium))
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .frame(height: 50)
+                .textCase(.lowercase)
             
             Text(distanceFormatter.format(place.distance))
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+                .font(FontManager.rounded(size: 14, weight: .regular))
+                .foregroundColor(ColorManager.secondaryText)
+                .textCase(.lowercase)
                 .onTapGesture {
                     distanceFormatter.toggle()
                 }
             
             if !place.shortDescription.isEmpty {
                 Text(place.shortDescription)
-                    .font(.caption)
+                    .font(FontManager.rounded(size: 12, weight: .regular))
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
                     .frame(height: 40)
+                    .textCase(.lowercase)
             } else {
                 Spacer().frame(height: 40)
             }
         }
-        .frame(height: 260)
-        .padding(.horizontal, 8)
-        .foregroundColor(.primary)
+        .frame(width: UIScreen.main.bounds.width / 2 - 24, height: 280)  // Fixed width and height for all cards
+        .padding(.vertical, 8)
+        .background(ColorManager.cardBackground)
+        .cornerRadius(15)
+        .shadow(color: Color.black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
     
     var letterPlaceholder: some View {
         ZStack {
-            Color.gray.opacity(0.3)
+            ColorManager.placeholderBackground
             Text(place.firstLetter)
-                .font(.system(size: 60, weight: .bold))
-                .foregroundColor(.white)
+                .font(FontManager.rounded(size: 60, weight: .bold))
+                .foregroundColor(ColorManager.placeholderText)
+                .textCase(.lowercase)
         }
-        .frame(width: 140, height: 140)
-        .cornerRadius(10)
     }
 }

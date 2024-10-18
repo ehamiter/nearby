@@ -36,6 +36,18 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .modifier(LocationUpdateModifier(locationUpdated: locationManager.locationUpdated, showGrid: $showGrid))
+        .navigationViewStyle(StackNavigationViewStyle())
+        .onAppear {
+            let appearance = UINavigationBarAppearance()
+            appearance.configureWithOpaqueBackground()
+            appearance.backgroundColor = UIColor(ColorManager.background)
+            appearance.titleTextAttributes = [.font: UIFont.rounded(ofSize: 20, weight: .bold), .foregroundColor: UIColor(ColorManager.text)]
+            appearance.largeTitleTextAttributes = [.font: UIFont.rounded(ofSize: 34, weight: .bold), .foregroundColor: UIColor(ColorManager.text)]
+            
+            UINavigationBar.appearance().standardAppearance = appearance
+            UINavigationBar.appearance().compactAppearance = appearance
+            UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        }
     }
 }
 
@@ -58,6 +70,21 @@ struct LocationUpdateModifier: ViewModifier {
                 }
             }
         }
+    }
+}
+
+extension UIFont {
+    class func rounded(ofSize size: CGFloat, weight: UIFont.Weight) -> UIFont {
+        let systemFont = UIFont.systemFont(ofSize: size, weight: weight)
+        let font: UIFont
+        
+        if let descriptor = systemFont.fontDescriptor.withDesign(.rounded) {
+            font = UIFont(descriptor: descriptor, size: size)
+        } else {
+            font = systemFont
+        }
+        
+        return font
     }
 }
 
