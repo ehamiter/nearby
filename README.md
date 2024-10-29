@@ -68,35 +68,3 @@ Response:
   }
 }
 ```
-
-#### Unsplash API:
-
-Sample request for getting a random photo (of pizza, for example):
-
-```
-https://api.unsplash.com/photos/random?query=pizza&client_id=YNYIkLtCp_FtJICktYncZsXhUXmTdXu8d9npUMJRGnU
-```
-
-Response (trimmed to show what is relevant):
-
-```
-{
-  "urls":
-  {
-    "regular": "https://images.unsplash.com/photo-1565357253897-79d691886a73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w2NjU5ODB8MHwxfHJhbmRvbXx8fHx8fHx8fDE3MjkyMDU0NjV8&ixlib=rb-4.0.3&q=80&w=1080",
-    "thumb": "https://images.unsplash.com/photo-1565357253897-79d691886a73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w2NjU5ODB8MHwxfHJhbmRvbXx8fHx8fHx8fDE3MjkyMDU0NjV8&ixlib=rb-4.0.3&q=80&w=200"
-  },
-  "links":
-  {
-    "html": "https://unsplash.com/photos/baked-pizza-in-oven-x5jilo3ck3o"
-  },
-  "user":
-  {
-    "name": "Stefan C. Asafti",
-    "links":
-    {
-      "html": "https://unsplash.com/@stefanasafti"
-    }
-  }
-}
-```
